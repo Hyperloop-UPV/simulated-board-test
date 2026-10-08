@@ -35,6 +35,7 @@ option(ITCM_BUILD "Build code in ITCM (fast execution, no wait states)" OFF)
 set(ITCM_SIZE "64K" CACHE STRING "ITCM size: 64K, 128K, 192K, or 256K")
 option(USE_CCACHE "Use ccache if available" ON)
 option(ENABLE_LTO "Enable link-time optimization (LTO)" ON)
+option(SIMULATOR_BUILD "Build for new simulator" OFF)
 
 if(USE_CCACHE)
   find_program(CCACHE_PROGRAM ccache)
@@ -45,20 +46,23 @@ if(USE_CCACHE)
   endif()
 endif()
 
-# Preprocess linker script through C preprocessor
-add_custom_command(
-  OUTPUT ${LD_SCRIPT}
-  COMMAND ${CMAKE_C_COMPILER} -E -P -x c
-    -D__ITCM_BUILD=$<IF:$<BOOL:${ITCM_BUILD}>,1,0>
-    -D__ITCM_SIZE=${ITCM_SIZE}
-    -o ${LD_SCRIPT} ${LD_SCRIPT_INPUT}
-  DEPENDS ${LD_SCRIPT_INPUT}
-  COMMENT "Preprocessing linker script (ITCM_BUILD=${ITCM_BUILD}, ITCM_SIZE=${ITCM_SIZE})"
-)
+# Preprocess linker script through C preprocessor (only meaningful for cross builds,
+# but the custom target is harmless to define in both cases; guard it for clarity).
+if(CMAKE_CROSSCOMPILING)
+  add_custom_command(
+    OUTPUT ${LD_SCRIPT}
+    COMMAND ${CMAKE_C_COMPILER} -E -P -x c
+      -D__ITCM_BUILD=$<IF:$<BOOL:${ITCM_BUILD}>,1,0>
+      -D__ITCM_SIZE=${ITCM_SIZE}
+      -o ${LD_SCRIPT} ${LD_SCRIPT_INPUT}
+    DEPENDS ${LD_SCRIPT_INPUT}
+    COMMENT "Preprocessing linker script (ITCM_BUILD=${ITCM_BUILD}, ITCM_SIZE=${ITCM_SIZE})"
+  )
 
-add_custom_target(preprocess_linker_script
-  DEPENDS ${LD_SCRIPT}
-)
+  add_custom_target(preprocess_linker_script
+    DEPENDS ${LD_SCRIPT}
+  )
+endif()
 
 message(STATUS "Template project: CMAKE_CROSSCOMPILING = ${CMAKE_CROSSCOMPILING}")
 message(STATUS "Template project: USE_ETHERNET         = ${USE_ETHERNET}")
@@ -128,7 +132,7 @@ add_custom_target(generate_binary_metadata
   DEPENDS ${METADATA_OUTPUT}
 )
 
-if(CMAKE_CROSSCOMPILING)
+if(CMAKE_CROSSCOMPILING OR NOT SIMULATOR_BUILD)
   file(GLOB_RECURSE SOURCE_C CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/Core/*.c)
   file(GLOB_RECURSE SOURCE_CPP CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/Core/*.cpp)
   file(GLOB_RECURSE SOURCE_H CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/Core/*.h)
@@ -253,6 +257,87 @@ if(CMAKE_CROSSCOMPILING)
       COMMENT "Removing BOARD build marker (NUCLEO build)"
     )
   endif()
+else()
+  # ---------------------------------------------------------------------------
+  # simulator build
+  # Compiles the same Core/ sources as the firmware target, but natively and
+  # links against the ST-LIB target provided by the submodule.
+  # ---------------------------------------------------------------------------
+  file(GLOB_RECURSE SOURCE_C CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/Core/*.c)
+  file(GLOB_RECURSE SOURCE_CPP CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/Core/*.cpp)
+  file(GLOB_RECURSE SOURCE_H CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/Core/*.h)
+  file(GLOB_RECURSE SOURCE_HPP CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/Core/*.hpp)
+
+  if(NOT BUILD_EXAMPLES)
+    file(GLOB_RECURSE EXAMPLE_CPP CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/Core/Src/Examples/*.cpp)
+    list(REMOVE_ITEM SOURCE_CPP ${EXAMPLE_CPP})
+  endif()
+
+  set(EXAMPLE_SELECTED OFF)
+  if(BUILD_EXAMPLES)
+    if(CMAKE_CXX_FLAGS MATCHES "(^|[ \t])-DEXAMPLE_[A-Za-z0-9_]+")
+      set(EXAMPLE_SELECTED ON)
+      message(STATUS "Template project: EXAMPLE_* detected, disabling default main()")
+    endif()
+  endif()
+
+  add_executable(${EXECUTABLE}
+    ${SOURCE_C}
+    ${SOURCE_CPP}
+    ${SOURCE_H}
+    ${SOURCE_HPP}
+  )
+
+  target_link_libraries(${EXECUTABLE} PRIVATE
+    ${STLIB_LIBRARY}
+  )
+
+  set_target_properties(${EXECUTABLE} PROPERTIES
+    CXX_STANDARD 23
+    CXX_STANDARD_REQUIRED YES
+    C_STANDARD 17
+    C_STANDARD_REQUIRED YES
+  )
+
+  # Match the firmware build's compile definitions, minus the ones that only
+  # make sense on the MCU (linker script ITCM values are still passed through
+  # because Core code may reference them, but HSE/NUCLEO macros are kept since
+  # the code compiled is identical to the firmware sources).
+  target_compile_definitions(${EXECUTABLE} PRIVATE
+    $<$<BOOL:${EXAMPLE_SELECTED}>:EXAMPLE_SELECTED>
+    $<$<BOOL:${USE_ETHERNET}>:STLIB_ETH>
+    $<IF:$<BOOL:${TARGET_NUCLEO}>,NUCLEO,BOARD>
+    $<IF:$<BOOL:${TARGET_NUCLEO}>,HSE_VALUE=8000000,HSE_VALUE=25000000>
+    __ITCM_BUILD=$<IF:$<BOOL:${ITCM_BUILD}>,1,0>
+    __ITCM_SIZE=${ITCM_SIZE}
+  )
+
+  target_compile_options(${EXECUTABLE} PRIVATE
+    $<$<CONFIG:Debug>:-g>
+    $<$<CONFIG:RelWithDebInfo>:-g>
+    -ffunction-sections
+    -fdata-sections
+    -fno-exceptions
+
+    -Wno-psabi
+
+    $<$<COMPILE_LANGUAGE:C>:-w>
+
+    $<$<COMPILE_LANGUAGE:CXX>:-Wall>
+    $<$<COMPILE_LANGUAGE:CXX>:-Werror>
+    $<$<COMPILE_LANGUAGE:CXX>:-fno-use-cxa-atexit>
+    $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>
+  )
+
+  target_include_directories(${EXECUTABLE} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Inc
+  )
+
+  #target_link_options(${EXECUTABLE} PRIVATE
+  #  $<$<BOOL:${CMAKE_CROSSCOMPILING}>:-T${LD_SCRIPT}>
+  #)
+
+  add_dependencies(${EXECUTABLE} run_generator generate_binary_metadata)
 endif()
 
 if(PROJECT_IS_TOP_LEVEL)

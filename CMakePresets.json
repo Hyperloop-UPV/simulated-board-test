@@ -195,8 +195,8 @@
             }
         },
         {
-            "name": "simulator",
-            "displayName": "Simulator",
+            "name": "simulator-old",
+            "displayName": "Simulator [Old]",
             "inherits": [
                 "sim"
             ],
@@ -205,14 +205,27 @@
             }
         },
         {
-            "name": "simulator-asan",
-            "displayName": "Simulator [ASAN+UBSAN]",
+            "name": "simulator-old-asan",
+            "displayName": "Simulator [Old] [ASAN+UBSAN]",
             "inherits": [
                 "sim"
             ],
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
                 "STLIB_ENABLE_SANITIZERS": "ON"
+            }
+        },
+        {
+            "name": "simulator",
+            "displayName": "Simulator",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "installDir": "${sourceDir}/out/install/${presetName}",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "BOARD_NAME": "TEST",
+                "SIMULATOR_BUILD": "ON"
             }
         }
     ],
@@ -278,18 +291,22 @@
             "configurePreset": "board-relwithdebinfo-eth-lan8700"
         },
         {
-            "name": "simulator",
-            "configurePreset": "simulator"
+            "name": "simulator-old",
+            "configurePreset": "simulator-old"
         },
         {
-            "name": "simulator-asan",
-            "configurePreset": "simulator-asan"
+            "name": "simulator-old-asan",
+            "configurePreset": "simulator-old-asan"
+        },
+        {
+            "name": "simulator",
+            "configurePreset": "simulator"
         }
     ],
     "testPresets": [
         {
-            "name": "simulator-all",
-            "configurePreset": "simulator",
+            "name": "simulator-old-all",
+            "configurePreset": "simulator-old",
             "output": {
                 "outputOnFailure": true
             },
@@ -298,8 +315,8 @@
             }
         },
         {
-            "name": "simulator-adc",
-            "inherits": "simulator-all",
+            "name": "simulator-old-adc",
+            "inherits": "simulator-old-all",
             "filter": {
                 "include": {
                     "name": "ADCTest"
@@ -307,8 +324,18 @@
             }
         },
         {
-            "name": "simulator-all-asan",
-            "configurePreset": "simulator-asan",
+            "name": "simulator-old-all-asan",
+            "configurePreset": "simulator-old-asan",
+            "output": {
+                "outputOnFailure": true
+            },
+            "execution": {
+                "noTestsAction": "error"
+            }
+        },
+        {
+            "name": "simulator-all",
+            "configurePreset": "simulator",
             "output": {
                 "outputOnFailure": true
             },
